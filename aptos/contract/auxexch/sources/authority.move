@@ -6,17 +6,9 @@ module aux::authority {
     use std::signer;
     use aptos_framework::account::{Self, SignerCapability};
 
-    use deployer::deployer;
-
-    friend aux::amm;
     friend aux::aux_coin;
     friend aux::clob_market;
     friend aux::vault;
-    friend aux::router;
-    friend aux::fake_coin;
-    friend aux::stake;
-    friend aux::stable_2pool;
-    friend aux::stable_3pool;
 
     const E_NOT_SELF_SIGNED: u64 = 1001;
     const E_CANNOT_SIGN_FOR_OTHER: u64 = 1002;
@@ -28,22 +20,22 @@ module aux::authority {
     }
 
     // on module initialization, the module will tries to get the signer capability from deployer.
-    fun init_module(source: &signer) {
-        let source_addr = signer::address_of(source);
-        if(!exists<Authority>(source_addr) && deployer::resource_account_signer_exists(source_addr)) {
-            let (owner_address, signer_capability) = deployer::retrieve_resource_account_signer(source);
-            let auth_signer = account::create_signer_with_capability(&signer_capability);
-            assert!(
-                signer::address_of(source) == signer::address_of(&auth_signer),
-                E_CANNOT_SIGN_FOR_OTHER,
-            );
-
-            move_to(source, Authority {
-                signer_capability,
-                owner_address,
-            });
-        }
-    }
+    // fun init_module(source: &signer) {
+        // let source_addr = signer::address_of(source);
+        // if(!exists<Authority>(source_addr) && deployer::resource_account_signer_exists(source_addr)) {
+        //     let (owner_address, signer_capability) = deployer::retrieve_resource_account_signer(source);
+        //     let auth_signer = account::create_signer_with_capability(&signer_capability);
+        //     assert!(
+        //         signer::address_of(source) == signer::address_of(&auth_signer),
+        //         E_CANNOT_SIGN_FOR_OTHER,
+        //     );
+        //
+        //     move_to(source, Authority {
+        //         signer_capability,
+        //         owner_address,
+        //     });
+        // }
+    // }
 
     // get signer for the module itself.
     public(friend) fun get_signer_self(): signer acquires Authority {
