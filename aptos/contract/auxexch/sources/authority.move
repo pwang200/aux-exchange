@@ -91,8 +91,8 @@ module aux::authority {
         signer::address_of(user) == auth.owner_address
     }
 
-    #[test_only]
-    public fun init_module_for_test(source: &signer) {
-        init_module(source)
-    }
+    // #[test_only]
+    // public fun init_module_for_test(source: &signer) {
+    //     init_module(source)
+    // }
 }

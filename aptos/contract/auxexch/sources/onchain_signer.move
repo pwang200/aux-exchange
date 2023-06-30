@@ -6,7 +6,7 @@ module aux::onchain_signer {
     use aptos_framework::account::{Self, SignerCapability};
 
     friend aux::vault;
-    friend aux::volume_tracker;
+    //friend aux::volume_tracker;
     friend aux::clob_market;
 
     struct OnchainSigner has key {
