@@ -3,16 +3,15 @@
 //   other coin is priced in.
 // - user balances in each of the coins (or the shares of the coins that the user entitled to in the treasury).
 module aux::vault {
-    friend aux::clob_market;
-
-    use std::signer;
     use std::error;
+    use std::signer;
 
     use aptos_framework::coin;
 
     use aux::onchain_signer;
     use aux::util::Type;
-    use aux::authority;
+
+    friend aux::clob_market;
 
     const EVAULT_ALREADY_EXISTS: u64 = 1;
     const EACCOUNT_ALREADY_EXISTS: u64 = 2;
@@ -43,31 +42,15 @@ module aux::vault {
 
     struct Vault has key {}
 
-    fun init_module(source: &signer) {
-        if (!exists<Vault>(signer::address_of(source))) {
-            move_to(source, Vault {});
-        };
-    }
-
     /*******************/
     /* ENTRY FUNCTIONS */
     /*******************/
 
     public entry fun create_vault(sender: &signer) {
-        // Allow init_module functions in aux to call this function.
-        let vault_signer = if (signer::address_of(sender) == @aux) {
-            sender
-        } else {
-            &authority::get_signer(sender)
-        };
-
-        assert!(
-            signer::address_of(vault_signer) == @aux,
-            error::permission_denied(ENOT_MODULE)
-        );
-
+        assert!(signer::address_of(sender) == @aux, error::permission_denied(ENOT_MODULE));
+        onchain_signer::create_onchain_signer(sender);
         if (!exists<Vault>(@aux)) {
-            move_to(vault_signer, Vault {});
+            move_to(sender, Vault {});
         }
     }
 
@@ -77,12 +60,7 @@ module aux::vault {
         to: address,
         amount_au: u64
     ) acquires CoinBalance {
-        // TODO: Account health check must be done before users can transfer funds.
         let from_addr = signer::address_of(from);
-        // assert!(
-        //     exists<AuxUserAccount>(to),
-        //     EACCOUNT_NOT_FOUND
-        // );
         decrease_user_balance<CoinType>(from_addr, (amount_au as u128));
         increase_user_balance<CoinType>(to, (amount_au as u128));
     }
@@ -107,7 +85,7 @@ module aux::vault {
         let owner_addr = signer::address_of(sender);
         //assert!(exists<AuxUserAccount>(owner_addr), error::not_found(EACCOUNT_NOT_FOUND));
         decrease_user_balance<CoinType>(owner_addr, (amount_au as u128));
-        let vault_signer = authority::get_signer_self();
+        let vault_signer = onchain_signer::get_signer(@aux);
         coin::transfer<CoinType>(&vault_signer, owner_addr, amount_au);
     }
 
@@ -142,7 +120,7 @@ module aux::vault {
         let owner_addr = signer::address_of(sender);
         //assert!(exists<AuxUserAccount>(owner_addr), error::not_found(EACCOUNT_NOT_FOUND));
         decrease_user_balance<CoinType>(owner_addr, (amount_au as u128));
-        let vault_signer = authority::get_signer_self();
+        let vault_signer = onchain_signer::get_signer(@aux);
         let coin = coin::withdraw<CoinType>(&vault_signer, amount_au);
         coin
     }
@@ -153,7 +131,8 @@ module aux::vault {
     ) acquires CoinBalance {
         //assert!(exists<AuxUserAccount>(to), error::not_found(EACCOUNT_NOT_FOUND));
         if (!coin::is_account_registered<CoinType>(@aux)) {
-            coin::register<CoinType>(&authority::get_signer_self());
+            let vault_signer = onchain_signer::get_signer(@aux);
+            coin::register<CoinType>(&vault_signer);
         };
         let amount = coin::value<CoinType>(&coin);
         coin::deposit<CoinType>(@aux, coin);
@@ -207,7 +186,10 @@ module aux::vault {
     }
 
     /// decrease balance that was previously marked unavailable
-    public(friend) fun decrease_unavailable_balance<CoinType>(user_addr: address, amount: u128): u128 acquires CoinBalance {
+    public(friend) fun decrease_unavailable_balance<CoinType>(
+        user_addr: address,
+        amount: u128
+    ): u128 acquires CoinBalance {
         let balance_address = onchain_signer::get_signer_address(user_addr);
         let coin_balance = borrow_global_mut<CoinBalance<CoinType>>(balance_address);
         assert!(
@@ -223,7 +205,10 @@ module aux::vault {
     }
 
     /// Note for vault-delegation PR: since decrease_user_balance and  already passed in user_addr, change this signer to user_addr doesn't decrease security, depend on the caller / wrapper that do all the proper check
-    public(friend) fun decrease_available_balance<CoinType>(user_addr: address, amount: u128): u128 acquires CoinBalance {
+    public(friend) fun decrease_available_balance<CoinType>(
+        user_addr: address,
+        amount: u128
+    ): u128 acquires CoinBalance {
         // TODO: Account health check must be done before available balance can be decreased
         let balance_address = onchain_signer::get_signer_address(user_addr);
         let coin_balance = borrow_global_mut<CoinBalance<CoinType>>(balance_address);
@@ -235,7 +220,10 @@ module aux::vault {
         coin_balance.available_balance
     }
 
-    public(friend) fun increase_available_balance<CoinType>(user_addr: address, amount: u128): u128 acquires CoinBalance {
+    public(friend) fun increase_available_balance<CoinType>(
+        user_addr: address,
+        amount: u128
+    ): u128 acquires CoinBalance {
         let balance_address = onchain_signer::get_signer_address(user_addr);
         let coin_balance = borrow_global_mut<CoinBalance<CoinType>>(balance_address);
 

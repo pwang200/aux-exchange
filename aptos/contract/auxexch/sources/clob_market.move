@@ -1,28 +1,16 @@
 module aux::clob_market {
-    //use std::signer;
+    use std::signer;
 
     use aptos_framework::coin;
     use aptos_framework::timestamp;
-    //use aptos_framework::type_info;
 
-    //use aux::authority;
     use aux::critbit::{Self, CritbitTree};
     use aux::critbit_v::{Self, CritbitTree as CritbitTreeV};
     use aux::fee;
     use aux::onchain_signer;
     use aux::util::{Self, exp};
     use aux::vault;
-    use std::signer;//::{Self, has_aux_account};
 
-    //use aux::aux_coin::AuxCoin;
-    //use std::vector;
-
-    //use aptos_framework::account;
-    //use aptos_framework::event;
-    //use aux::volume_tracker;
-    // Config
-    //const CANCEL_EXPIRATION_TIME: u64 = 100000000;
-    // 100 s
     const MAX_U64: u64 = 18446744073709551615;
     const CRITBIT_NULL_INDEX: u64 = 1 << 63;
     const ZERO_FEES: bool = true;
@@ -170,19 +158,6 @@ module aux::clob_market {
         lot_size: u64,
         tick_size: u64
     ) {
-        // // The signer must own one of the coins or be the aux authority.
-        // let base_type = type_info::type_of<B>();
-        // let quote_type = type_info::type_of<Q>();
-        // let sender_address = signer::address_of(sender);
-        // if (type_info::account_address(&base_type) != sender_address &&
-        //     type_info::account_address(&quote_type) != sender_address) {
-        //     // Asserts that sender has the authority for @aux.
-        //     assert!(
-        //         authority::is_signer_owner(sender),
-        //         E_UNAUTHORIZED_FOR_MARKET_CREATION,
-        //     );
-        // };
-
         let base_decimals = coin::decimals<B>();
         let quote_decimals = coin::decimals<Q>();
         let base_exp = exp(10, (base_decimals as u128));
@@ -190,10 +165,7 @@ module aux::clob_market {
         assert!((lot_size as u128) * (tick_size as u128) / base_exp > 0, E_INVALID_TICK_OR_LOT_SIZE);
         // This invariant ensures that the smallest possible trade value has no rounding issue with quote asset decimals
         assert!((lot_size as u128) * (tick_size as u128) % base_exp == 0, E_INVALID_TICK_OR_LOT_SIZE);
-
         assert!(!market_exists<B, Q>(), E_MARKET_ALREADY_EXISTS);
-
-        //let clob_signer = authority::get_signer_self();
 
         move_to(sender, Market<B, Q> {
             base_decimals,
@@ -214,29 +186,22 @@ module aux::clob_market {
 
     /// Place a limit order. Returns order ID of new order. Emits events on order placement and fills.
     public entry fun place_order<B, Q>(
-        sender: &signer, // sender is the user who initiates the trade (can also be the vault_account_owner itself) on behalf of vault_account_owner. Will only succeed if sender is the creator of the account, or on the access control list of the account published under vault_account_owner address
-        //vault_account_owner: address, // vault_account_owner is, from the module's internal perspective, the address that actually makes the trade. It will be the actual account that has changes in balance (fee, volume tracker, etc is all associated with vault_account_owner, and independent of sender (i.e. delegatee))
+        sender: &signer,
         is_bid: bool,
         limit_price: u64,
         quantity: u64,
         client_order_id: u128,
         order_type: u64,
-        timeout_timestamp: u64, // if by the timeout_timestamp the submitted order is not filled, then it would be cancelled automatically, if the timeout_timestamp <= current_timestamp, the order would not be placed and cancelled immediately
+        timeout_timestamp: u64,
     ) acquires Market, OpenOrderAccount {
-        // // First confirm the sender is allowed to trade on behalf of vault_account_owner
-        // vault::assert_trader_is_authorized_for_account(sender, vault_account_owner);
-        //
-        // // Confirm that vault_account_owner has an aux account
-        // assert!(has_aux_account(vault_account_owner), E_MISSING_AUX_USER_ACCOUNT);
-        let vault_account_owner = signer::address_of(sender);
-        // Confirm that market exists
-        let resource_addr = @aux;
         assert!(market_exists<B, Q>(), E_MARKET_DOES_NOT_EXIST);
+        let sender_addr = signer::address_of(sender);
+        let resource_addr = @aux;
         let market = borrow_global_mut<Market<B, Q>>(resource_addr);
 
         let (base_au, quote_au) = new_order(
             market,
-            vault_account_owner,
+            sender_addr,
             is_bid,
             limit_price,
             quantity,
@@ -248,12 +213,12 @@ module aux::clob_market {
             // Debit/credit the sender's vault account
             if (is_bid) {
                 // taker pays quote, receives base
-                vault::decrease_user_balance<Q>(vault_account_owner, (quote_au as u128));
-                vault::increase_user_balance<B>(vault_account_owner, (base_au as u128));
+                vault::decrease_user_balance<Q>(sender_addr, (quote_au as u128));
+                vault::increase_user_balance<B>(sender_addr, (base_au as u128));
             } else {
                 // taker receives quote, pays base
-                vault::increase_user_balance<Q>(vault_account_owner, (quote_au as u128));
-                vault::decrease_user_balance<B>(vault_account_owner, (base_au as u128));
+                vault::increase_user_balance<Q>(sender_addr, (quote_au as u128));
+                vault::decrease_user_balance<B>(sender_addr, (base_au as u128));
             }
         } else if (base_au != 0 || quote_au != 0) {
             // abort if sender paid but did not receive and vice versa
@@ -261,7 +226,8 @@ module aux::clob_market {
         }
     }
 
-    /// Returns (total_base_quantity_owed_au, quote_quantity_owed_au), the amounts that must be credited/debited to the sender.
+    /// Returns (total_base_quantity_owed_au, quote_quantity_owed_au),
+    /// the amounts that must be credited/debited to the sender.
     /// Emits OrderFill events
     fun handle_fill<B, Q>(
         taker_order: &Order,
@@ -314,9 +280,7 @@ module aux::clob_market {
             );
 
             let order_idx = critbit::find(&open_order_account.open_orders, maker_order.id);
-
             assert!(order_idx != CRITBIT_NULL_INDEX, E_ORDER_NOT_IN_OPEN_ORDER_ACCOUNT);
-
             critbit::remove(&mut open_order_account.open_orders, order_idx);
         };
 
@@ -404,22 +368,11 @@ module aux::clob_market {
         (base_qty_filled, quote_qty_filled)
     }
 
-    public entry fun cancel_order<B, Q>(
-        sender: &signer,
-        //delegator: address,
-        order_id: u128
-    ) acquires Market, OpenOrderAccount {
-        // // First confirm the sender is allowed to trade on behalf of delegator
-        // vault::assert_trader_is_authorized_for_account(sender, delegator);
-        //
-        // // Confirm that delegator has a aux account
-        // assert!(has_aux_account(delegator), E_MISSING_AUX_USER_ACCOUNT);
-         let delegator = signer::address_of(sender);
-        // Confirm that market exists
-        let resource_addr = @aux;
+    public entry fun cancel_order<B, Q>(sender: &signer, order_id: u128) acquires Market, OpenOrderAccount {
         assert!(market_exists<B, Q>(), E_MARKET_DOES_NOT_EXIST);
+        let delegator = signer::address_of(sender);
+        let resource_addr = @aux;
 
-        // Cancel order
         let market = borrow_global_mut<Market<B, Q>>(resource_addr);
         let open_order_address = onchain_signer::get_signer_address(delegator);
         assert!(exists<OpenOrderAccount<B, Q>>(open_order_address), E_NO_OPEN_ORDERS_ACCOUNT);
@@ -430,8 +383,7 @@ module aux::clob_market {
         let (_, OpenOrderInfo { price, is_bid }) = critbit::borrow_at_index(&open_order_account.open_orders, order_idx);
         let cancelled = inner_cancel_order(market, order_id, delegator, *price, *is_bid);
 
-        //let lot_size = (market.lot_size as u128);
-        process_cancel_order<B, Q>(cancelled);//,             lot_size);
+        process_cancel_order<B, Q>(cancelled);
     }
 
     public fun market_exists<B, Q>(): bool {
@@ -465,9 +417,7 @@ module aux::clob_market {
         return order
     }
 
-    fun process_cancel_order<B, Q>(cancelled: Order,
-                                   //lot_size: u128
-    ) acquires OpenOrderAccount {
+    fun process_cancel_order<B, Q>(cancelled: Order) acquires OpenOrderAccount {
         let open_order_account = borrow_global_mut<OpenOrderAccount<B, Q>>(
             onchain_signer::get_signer_address(cancelled.owner_id)
         );
@@ -609,195 +559,3 @@ module aux::clob_market {
         }
     }
 }
-
-// public fun best_bid_price<B, Q>(market: &Market<B, Q>): u64 {
-//     assert!(critbit::size(&market.bids) > 0, E_NO_BIDS_IN_BOOK);
-//     let index = critbit::get_max_index(&market.bids);
-//     let (_, level) = critbit::borrow_at_index(&market.bids, index);
-//     level.price
-// }
-//
-// public fun best_ask_price<B, Q>(market: &Market<B, Q>): u64 {
-//     assert!(critbit::size(&market.asks) > 0, E_NO_ASKS_IN_BOOK);
-//     let index = critbit::get_min_index(&market.asks);
-//     let (_, level) = critbit::borrow_at_index(&market.asks, index);
-//     level.price
-// }
-
-// public fun n_bid_levels<B, Q>(): u64 acquires Market {
-//     assert!(market_exists<B, Q>(),E_MARKET_DOES_NOT_EXIST);
-//     let market = borrow_global<Market<B, Q>>(@aux);
-//     critbit::size(&market.bids)
-// }
-//
-// public fun n_ask_levels<B, Q>(): u64 acquires Market {
-//     assert!(market_exists<B, Q>(),E_MARKET_DOES_NOT_EXIST);
-//     let market = borrow_global<Market<B, Q>>(@aux);
-//     critbit::size(&market.asks)
-// }
-//
-// public fun lot_size<B, Q>(): u64 acquires Market {
-//     assert!(market_exists<B, Q>(),E_MARKET_DOES_NOT_EXIST);
-//     let market = borrow_global<Market<B, Q>>(@aux);
-//     market.lot_size
-// }
-
-// public fun tick_size<B, Q>(): u64 acquires Market {
-//     assert!(market_exists<B, Q>(),E_MARKET_DOES_NOT_EXIST);
-//     let market = borrow_global<Market<B, Q>>(@aux);
-//     market.tick_size
-// }
-//
-// // TODO: consolidate these with inner functions
-// // Returns the best bid price as quote coin atomic units
-// public fun best_bid_au<B, Q>(): u64 acquires Market {
-//     let market = borrow_global<Market<B, Q>>(@aux);
-//     best_bid_price(market)
-// }
-//
-// // Returns the best bid price as quote coin atomic units
-// public fun best_ask_au<B, Q>(): u64 acquires Market {
-//     let market = borrow_global<Market<B, Q>>(@aux);
-//     best_ask_price(market)
-// }
-
-// struct L2Event has store, drop {
-//     bids: vector<L2Quote>,
-//     asks: vector<L2Quote>,
-// }
-//
-// struct L2Quote has store, drop {
-//     price: u64,
-//     quantity: u128,
-// }
-//
-// struct AllOrdersEvent has store, drop {
-//     bids: vector<vector<OpenOrderEventInfo>>,
-//     asks: vector<vector<OpenOrderEventInfo>>,
-// }
-//
-// // we don't want to add drop to type Order
-// // so we create a copy of Order here for the event.
-// struct OpenOrderEventInfo has store, drop {
-//     id: u128,
-//     client_order_id: u128,
-//     price: u64,
-//     quantity: u64,
-//     aux_au_to_burn_per_lot: u64,
-//     is_bid: bool,
-//     owner_id: address,
-//     timeout_timestamp: u64,
-//     order_type: u64,
-//     timestamp: u64,
-// }
-//
-// struct OpenOrdersEvent has store, drop {
-//     open_orders: vector<OpenOrderEventInfo>,
-// }
-//
-// struct MarketDataStore<phantom B, phantom Q> has key {
-//     l2_events: event::EventHandle<L2Event>,
-//     open_orders_events: event::EventHandle<OpenOrdersEvent>,
-// }
-//
-// struct AllOrdersStore<phantom B, phantom Q> has key {
-//     all_ordes_events: event::EventHandle<AllOrdersEvent>,
-// }
-
-// public fun place_market_order<B, Q>(
-//     sender_addr: address,
-//     base_coin: coin::Coin<B>,
-//     quote_coin: coin::Coin<Q>,
-//     is_bid: bool,
-//     order_type: u64,
-//     limit_price: u64,
-//     quantity: u64,
-//     client_order_id: u128,
-// ): (coin::Coin<B>, coin::Coin<Q>)  acquires Market, OpenOrderAccount {
-//     place_market_order_mut(
-//         sender_addr,
-//         &mut base_coin,
-//         &mut quote_coin,
-//         is_bid,
-//         order_type,
-//         limit_price,
-//         quantity,
-//         client_order_id
-//     );
-//     (base_coin, quote_coin)
-// }
-//
-// /// Place a market order (IOC or FOK) on behalf of the router.
-// /// Returns (total_base_quantity_owed_au, quote_quantity_owed_au), the amounts that must be credited/debited to the sender.
-// /// Emits events on order placement and fills.
-// public fun place_market_order_mut<B, Q>(
-//     sender_addr: address,
-//     base_coin: &mut coin::Coin<B>,
-//     quote_coin: &mut coin::Coin<Q>,
-//     is_bid: bool,
-//     order_type: u64,
-//     limit_price: u64,
-//     quantity: u64,
-//     client_order_id: u128,
-// ): (u64, u64)  acquires Market, OpenOrderAccount {
-//
-//     // Confirm that market exists
-//     let resource_addr = @aux;
-//     assert!(market_exists<B, Q>(),E_MARKET_DOES_NOT_EXIST);
-//     let market = borrow_global_mut<Market<B, Q>>(resource_addr);
-//
-//     // The router may only place FOK or IOC orders
-//     //TODO keep market order?
-//     // assert!(order_type == FILL_OR_KILL || order_type == IMMEDIATE_OR_CANCEL, E_INVALID_ROUTER_ORDER_TYPE);
-//
-//     // round quantity down (router may submit un-quantized quantities)
-//     let lot_size = market.lot_size;
-//     let tick_size = market.tick_size;
-//     let rounded_quantity = quantity / lot_size * lot_size;
-//     let rounded_price = limit_price / tick_size * tick_size;
-//
-//     let (base_au, quote_au) = new_order<B, Q>(
-//         market,
-//         sender_addr,
-//         is_bid,
-//         rounded_price,
-//         rounded_quantity,
-//         0,
-//         order_type,
-//         client_order_id,
-//         // 0,
-//         // false,
-//         MAX_U64,
-//         CANCEL_AGGRESSIVE,
-//     );
-//
-//     // Transfer coins
-//     let vault_addr = @aux;
-//     let module_signer = &authority::get_signer_self();
-//     if (base_au != 0 && quote_au != 0) {
-//         if (is_bid) {
-//             // taker pays quote, receives base
-//             let quote = coin::extract<Q>(quote_coin, (quote_au as u64));
-//             if (!coin::is_account_registered<Q>(@aux)) {
-//                 coin::register<Q>(module_signer);
-//             };
-//             coin::deposit<Q>(vault_addr, quote);
-//             let base = coin::withdraw<B>(module_signer, (base_au as u64));
-//             coin::merge<B>(base_coin, base);
-//         } else {
-//             // taker receives quote, pays base
-//             let base = coin::extract<B>(base_coin, (base_au as u64));
-//             if (!coin::is_account_registered<B>(@aux)) {
-//                 coin::register<B>(module_signer);
-//             };
-//             coin::deposit<B>(vault_addr, base);
-//             let quote = coin::withdraw<Q>(module_signer, (quote_au as u64));
-//             coin::merge<Q>(quote_coin, quote);
-//
-//         }
-//     } else if (base_au != 0 || quote_au != 0) {
-//         // abort if sender paid but did not receive and vice versa
-//         abort(E_INVALID_STATE)
-//     };
-//     (base_au, quote_au)
-// }
