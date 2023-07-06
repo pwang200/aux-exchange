@@ -5,8 +5,9 @@
 module aux::authority {
     use std::signer;
     use aptos_framework::account::{Self, SignerCapability};
+    use std::bcs;
+    use std::vector;
 
-    friend aux::aux_coin;
     friend aux::clob_market;
     friend aux::vault;
 
@@ -20,22 +21,25 @@ module aux::authority {
     }
 
     // on module initialization, the module will tries to get the signer capability from deployer.
-    // fun init_module(source: &signer) {
-        // let source_addr = signer::address_of(source);
-        // if(!exists<Authority>(source_addr) && deployer::resource_account_signer_exists(source_addr)) {
-        //     let (owner_address, signer_capability) = deployer::retrieve_resource_account_signer(source);
-        //     let auth_signer = account::create_signer_with_capability(&signer_capability);
-        //     assert!(
-        //         signer::address_of(source) == signer::address_of(&auth_signer),
-        //         E_CANNOT_SIGN_FOR_OTHER,
-        //     );
-        //
-        //     move_to(source, Authority {
-        //         signer_capability,
-        //         owner_address,
-        //     });
-        // }
-    // }
+    fun init_module(source: &signer) {
+        let source_addr = signer::address_of(source);
+        if(!exists<Authority>(source_addr)) {
+            let bytes = bcs::to_bytes(&@aux);
+            vector::append(&mut bytes, b"aux-Authority");
+            let (auth_signer, signer_capability) =
+                account::create_resource_account(source, bytes);
+            let owner_address = signer::address_of(&auth_signer);
+            assert!(
+                signer::address_of(source) == owner_address,
+                E_CANNOT_SIGN_FOR_OTHER,
+            );
+
+            move_to(source, Authority {
+                signer_capability,
+                owner_address,
+            });
+        }
+    }
 
     // get signer for the module itself.
     public(friend) fun get_signer_self(): signer acquires Authority {

@@ -7,20 +7,12 @@ module aux::vault {
 
     use std::signer;
     use std::error;
-    use std::string::String;
 
-    // use aptos_std::debug;
     use aptos_framework::coin;
-    use aptos_framework::event;
-    use aptos_framework::type_info;
-    use aptos_framework::account;
-    use aptos_std::table::{Self, Table};
 
     use aux::onchain_signer;
     use aux::util::Type;
     use aux::authority;
-    //use aux::volume_tracker;
-    use aux::fee;
 
     const EVAULT_ALREADY_EXISTS: u64 = 1;
     const EACCOUNT_ALREADY_EXISTS: u64 = 2;
@@ -49,58 +41,17 @@ module aux::vault {
     // Used for set definition.
     struct Nothing has store, copy, drop {}
 
-    // Aux user account
-    struct AuxUserAccount has key {
-        // Any account listed here can deposit and trade but not withdraw on
-        // behalf of the user.
-        authorized_traders: Table<address, Nothing>
-    }
-
-    struct TransferEvent has store, drop {
-        coinType: String,
-        from: address,
-        to: address,
-        amount_au: u64,
-    }
-
-    struct DepositEvent has store, drop{
-        coinType: String,
-        depositor: address,
-        to: address,
-        amount_au: u64,
-    }
-
-    struct WithdrawEvent has store, drop {
-        coinType: String,
-        owner: address,
-        amount_au: u64,
-    }
-
-    struct Vault has key {
-        transfer_events: event::EventHandle<TransferEvent>,
-        deposit_events: event::EventHandle<DepositEvent>,
-        withdraw_events: event::EventHandle<WithdrawEvent>,
-    }
+    struct Vault has key {}
 
     fun init_module(source: &signer) {
         if (!exists<Vault>(signer::address_of(source))) {
-            move_to(source, Vault {
-                transfer_events: account::new_event_handle<TransferEvent>(source),
-                deposit_events: account::new_event_handle<DepositEvent>(source),
-                withdraw_events: account::new_event_handle<WithdrawEvent>(source),
-            });
+            move_to(source, Vault {});
         };
     }
 
     /*******************/
     /* ENTRY FUNCTIONS */
     /*******************/
-
-    /// TODO
-    /// update mark price from oracle.
-    // public entry fun update_mark_price<CoinType>() {
-    //     assert!(false, UNIMPLEMENTED);
-    // }
 
     public entry fun create_vault(sender: &signer) {
         // Allow init_module functions in aux to call this function.
@@ -116,58 +67,24 @@ module aux::vault {
         );
 
         if (!exists<Vault>(@aux)) {
-            move_to(vault_signer, Vault {
-                transfer_events: account::new_event_handle<TransferEvent>(vault_signer),
-                deposit_events: account::new_event_handle<DepositEvent>(vault_signer),
-                withdraw_events: account::new_event_handle<WithdrawEvent>(vault_signer),
-            });
+            move_to(vault_signer, Vault {});
         }
     }
 
-    /// request an account from treasury.
-    public entry fun create_aux_account(sender: &signer) {
-        let sender_addr = signer::address_of(sender);
-        assert!(!exists<AuxUserAccount>(sender_addr), error::already_exists(EACCOUNT_ALREADY_EXISTS));
-        move_to(sender, AuxUserAccount{
-            authorized_traders: table::new(),
-        });
-        onchain_signer::create_onchain_signer(sender);
-
-        // Initialize fee for this account if hasn't
-        if(!fee::fee_exists(sender_addr)){
-            fee::initialize_fee_default(sender);
-        };
-
-        // TODO: emit event for account creation?
-    }
-
-
     /// Transfer the coins between two different accounts of the ledger.
-    /// TODO: support delegation or not? currently unsupported
     public entry fun transfer<CoinType>(
         from: &signer,
         to: address,
         amount_au: u64
-    ) acquires Vault, CoinBalance {
+    ) acquires CoinBalance {
         // TODO: Account health check must be done before users can transfer funds.
         let from_addr = signer::address_of(from);
-        assert!(
-            exists<AuxUserAccount>(to),
-            EACCOUNT_NOT_FOUND
-        );
+        // assert!(
+        //     exists<AuxUserAccount>(to),
+        //     EACCOUNT_NOT_FOUND
+        // );
         decrease_user_balance<CoinType>(from_addr, (amount_au as u128));
         increase_user_balance<CoinType>(to, (amount_au as u128));
-
-        let vault_events = borrow_global_mut<Vault>(@aux);
-        event::emit_event<TransferEvent>(
-            &mut vault_events.transfer_events,
-            TransferEvent {
-                coinType: type_info::type_name<CoinType>(),
-                from: signer::address_of(from),
-                to,
-                amount_au,
-            }
-        );
     }
 
     /// Deposit funds. Returns user's new balance. Can only deposit to sender's
@@ -175,104 +92,23 @@ module aux::vault {
     /// whitelisted.
     public entry fun deposit<CoinType>(
         sender: &signer,
-        to: address,
+        //to: address,
         amount: u64
-    ) acquires AuxUserAccount, CoinBalance, Vault {
-        // Confirm whether can deposit
-        assert_trader_is_authorized_for_account(sender, to);
-        assert!(exists<AuxUserAccount>(to), error::not_found(EACCOUNT_NOT_FOUND));
-        if (!coin::is_account_registered<CoinType>(@aux)) {
-            coin::register<CoinType>(&authority::get_signer_self());
-        };
+    ) acquires CoinBalance {
         coin::transfer<CoinType>(sender, @aux, amount);
-        increase_user_balance<CoinType>(to, (amount as u128));
-
-        let vault_events = borrow_global_mut<Vault>(@aux);
-        event::emit_event<DepositEvent>(
-            &mut vault_events.deposit_events,
-            DepositEvent {
-                coinType: type_info::type_name<CoinType>(),
-                depositor: signer::address_of(sender),
-                to: to,
-                amount_au: amount,
-            }
-        );
+        increase_user_balance<CoinType>(signer::address_of(sender), (amount as u128));
     }
 
     /// Withdraw funds. Returns user's new balance.
     public entry fun withdraw<CoinType>(
         sender: &signer,
         amount_au: u64
-    ) acquires CoinBalance, Vault {
+    ) acquires CoinBalance {
         let owner_addr = signer::address_of(sender);
-        assert!(exists<AuxUserAccount>(owner_addr), error::not_found(EACCOUNT_NOT_FOUND));
+        //assert!(exists<AuxUserAccount>(owner_addr), error::not_found(EACCOUNT_NOT_FOUND));
         decrease_user_balance<CoinType>(owner_addr, (amount_au as u128));
         let vault_signer = authority::get_signer_self();
         coin::transfer<CoinType>(&vault_signer, owner_addr, amount_au);
-
-        let vault_events = borrow_global_mut<Vault>(@aux);
-        event::emit_event<WithdrawEvent>(
-            &mut vault_events.withdraw_events,
-            WithdrawEvent {
-                coinType: type_info::type_name<CoinType>(),
-                owner: signer::address_of(sender),
-                amount_au,
-            }
-        );
-    }
-
-    /// Adds an authorized trader for the account owned by sender. The sender is
-    /// automatically authorized for the sender's own account, so adding is
-    /// unnecessary. Fails if the input trader is already authorized.
-    public entry fun add_authorized_trader(
-        sender: &signer,
-        trader: address
-    ) acquires AuxUserAccount {
-        let owner = signer::address_of(sender);
-        let account = borrow_global_mut<AuxUserAccount>(owner);
-        table::add(&mut account.authorized_traders, trader, Nothing {});
-    }
-
-    // Removes an authorized trader from the account owned by sender. The sender
-    // is automatically authorized for the sender's own account, and removing
-    // has no effect. Fails if the input trader isn't currently authorized.
-    public entry fun remove_authorized_trader(
-        sender: &signer,
-        trader: address
-    ) acquires AuxUserAccount {
-        let owner = signer::address_of(sender);
-        let account = borrow_global_mut<AuxUserAccount>(owner);
-        table::remove(&mut account.authorized_traders, trader);
-    }
-
-    /********************/
-    /* PUBLIC FUNCTIONS */
-    /********************/
-
-    /// Asserts that the trader has authority for the given account. Authority
-    /// is granted by add_authorized_trader and removed by
-    /// remove_authorized_trader.
-    public fun assert_trader_is_authorized_for_account(
-        trader: &signer,
-        account: address
-    ) acquires AuxUserAccount {
-        let trader_address = signer::address_of(trader);
-        // You are always authorized to trade your own account.
-        if (trader_address == account) {
-            return
-        };
-        let target_account = borrow_global<AuxUserAccount>(account);
-        assert!(
-            table::contains(
-                &target_account.authorized_traders,
-                trader_address
-            ),
-            ETRADER_NOT_AUTHORIZED
-        );
-    }
-
-    public fun has_aux_account(addr: address): bool {
-        exists<AuxUserAccount>(addr)
     }
 
     /// Return's the user balance in CoinType. Returns zero if no amount of
@@ -302,47 +138,26 @@ module aux::vault {
     public fun withdraw_coin<CoinType>(
         sender: &signer,
         amount_au: u64
-    ): coin::Coin<CoinType> acquires CoinBalance, Vault {
+    ): coin::Coin<CoinType> acquires CoinBalance {
         let owner_addr = signer::address_of(sender);
-        assert!(exists<AuxUserAccount>(owner_addr), error::not_found(EACCOUNT_NOT_FOUND));
+        //assert!(exists<AuxUserAccount>(owner_addr), error::not_found(EACCOUNT_NOT_FOUND));
         decrease_user_balance<CoinType>(owner_addr, (amount_au as u128));
         let vault_signer = authority::get_signer_self();
         let coin = coin::withdraw<CoinType>(&vault_signer, amount_au);
-
-        let vault_events = borrow_global_mut<Vault>(@aux);
-        event::emit_event<WithdrawEvent>(
-            &mut vault_events.withdraw_events,
-            WithdrawEvent {
-                coinType: type_info::type_name<CoinType>(),
-                owner: signer::address_of(sender),
-                amount_au,
-            }
-        );
         coin
     }
 
     public fun deposit_coin<CoinType>(
         to: address,
         coin: coin::Coin<CoinType>,
-    ) acquires CoinBalance, Vault {
-        assert!(exists<AuxUserAccount>(to), error::not_found(EACCOUNT_NOT_FOUND));
+    ) acquires CoinBalance {
+        //assert!(exists<AuxUserAccount>(to), error::not_found(EACCOUNT_NOT_FOUND));
         if (!coin::is_account_registered<CoinType>(@aux)) {
             coin::register<CoinType>(&authority::get_signer_self());
         };
         let amount = coin::value<CoinType>(&coin);
         coin::deposit<CoinType>(@aux, coin);
         increase_user_balance<CoinType>(to, (amount as u128));
-
-        let vault_events = borrow_global_mut<Vault>(@aux);
-        event::emit_event<DepositEvent>(
-            &mut vault_events.deposit_events,
-            DepositEvent {
-                coinType: type_info::type_name<CoinType>(),
-                depositor: to,
-                to: to,
-                amount_au: amount,
-            }
-        );
     }
 
 
