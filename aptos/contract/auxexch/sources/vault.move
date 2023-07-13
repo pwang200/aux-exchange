@@ -1,6 +1,6 @@
 // vault defines
-// - a vault, or a resource account, that holds many coins that users deposit. One of the coins is funding coin, which every
-//   other coin is priced in.
+// - a vault, or a resource account, that holds many coins that users deposit. One of the coins is funding coin,
+//   which every other coin is priced in.
 // - user balances in each of the coins (or the shares of the coins that the user entitled to in the treasury).
 module aux::vault {
     use std::error;
@@ -70,7 +70,6 @@ module aux::vault {
     /// whitelisted.
     public entry fun deposit<CoinType>(
         sender: &signer,
-        //to: address,
         amount: u64
     ) acquires CoinBalance {
         coin::transfer<CoinType>(sender, @aux, amount);
@@ -204,7 +203,9 @@ module aux::vault {
         coin_balance.balance
     }
 
-    /// Note for vault-delegation PR: since decrease_user_balance and  already passed in user_addr, change this signer to user_addr doesn't decrease security, depend on the caller / wrapper that do all the proper check
+    /// Note for vault-delegation PR: since decrease_user_balance and
+    /// already passed in user_addr, change this signer to user_addr doesn't
+    /// decrease security, depend on the caller / wrapper that do all the proper check
     public(friend) fun decrease_available_balance<CoinType>(
         user_addr: address,
         amount: u128

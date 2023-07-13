@@ -1,12 +1,3 @@
-// Have to separete fee as a separate module to resolve dependency cycle after initialize fee when `create_aux_account` in vault, the reason is when delegator places an order, it won't have signer capability of the original account creator, so won't be able to initialize the fee during place_order
-// a incomplete view of the dependency graph:
-// router -> amm -> constant_product (the amm fee is independent of clob)
-//        -> clob_market  -> clob ->: clob_side -> clob_level -> clob_order
-//                                                -> rb_tree    -> rb_tree
-//                          -> fee -> volume_tracker
-//                          -> volume_tracker
-//                          -> vault -> volume_tracker
-
 module aux::fee {
     use std::signer;
     const FEE_ALREADY_INITIALIZED: u64 = 0;
