@@ -2,6 +2,7 @@ module aux::clob_market {
     use std::signer;
 
     use aptos_framework::coin;
+    use std::debug;
 
     use aux::critbit::{Self, CritbitTree};
     use aux::critbit_v::{Self, CritbitTree as CritbitTreeV};
@@ -160,7 +161,7 @@ module aux::clob_market {
         let resource_addr = @aux;
         let market = borrow_global_mut<Market<B, Q>>(resource_addr);
         let order_id = generate_order_id(market);
-
+        debug::print(&order_id);
         let (base_au, quote_au) = new_order(
             market,
             sender_addr,
@@ -325,18 +326,19 @@ module aux::clob_market {
 
     public entry fun cancel_order<B, Q>(sender: &signer, order_id: u128) acquires Market, OpenOrderAccount {
         assert!(market_exists<B, Q>(), E_MARKET_DOES_NOT_EXIST);
-        let delegator = signer::address_of(sender);
+        let sender_addr = signer::address_of(sender);
         let resource_addr = @aux;
 
         let market = borrow_global_mut<Market<B, Q>>(resource_addr);
-        let open_order_address = onchain_signer::get_signer_address(delegator);
+        let open_order_address = onchain_signer::get_signer_address(sender_addr);
         assert!(exists<OpenOrderAccount<B, Q>>(open_order_address), E_NO_OPEN_ORDERS_ACCOUNT);
 
         let open_order_account = borrow_global<OpenOrderAccount<B, Q>>(open_order_address);
         let order_idx = critbit::find(&open_order_account.open_orders, order_id);
         assert!(order_idx != CRITBIT_NULL_INDEX, E_ORDER_NOT_FOUND);
-        let (_, OpenOrderInfo { price, is_bid }) = critbit::borrow_at_index(&open_order_account.open_orders, order_idx);
-        let cancelled = inner_cancel_order(market, order_id, delegator, *price, *is_bid);
+        let (_, OpenOrderInfo { price, is_bid }) = critbit::borrow_at_index(
+            &open_order_account.open_orders, order_idx);
+        let cancelled = inner_cancel_order(market, order_id, sender_addr, *price, *is_bid);
 
         process_cancel_order<B, Q>(cancelled);
     }
@@ -589,256 +591,46 @@ module aux::clob_market {
         assert_eq_u128(vault::balance<QuoteCoin>(bob_addr), 0);
         assert_eq_u128(vault::balance<BaseCoin>(bob_addr), 5000);
 
-        // Test placing limit orders
-
         // 1. alice: BUY 2 @ 100
-        place_order<BaseCoin, QuoteCoin>(alice, true, 10000, 200, LIMIT_ORDER);
+        place_order<BaseCoin, QuoteCoin>(alice, true, 10000, 300, LIMIT_ORDER);
         assert_eq_u128(vault::balance<QuoteCoin>(alice_addr), 500000);
-        assert!(vault::available_balance<QuoteCoin>(alice_addr) == 480000, (vault::available_balance<QuoteCoin>(alice_addr) as u64));
+        assert!(vault::available_balance<QuoteCoin>(alice_addr) == 470000,
+            (vault::available_balance<QuoteCoin>(alice_addr) as u64));
+        let order_id_0 = 0;
 
         // 2. bob: SELL 1 @ 100
         place_order<BaseCoin, QuoteCoin>(bob, false, 10000, 100,  LIMIT_ORDER);
         assert_eq_u128(vault::balance<QuoteCoin>(alice_addr) , 490000);
-        assert!(vault::available_balance<QuoteCoin>(alice_addr) == 480000, (vault::available_balance<QuoteCoin>(alice_addr) as u64));
+        assert!(vault::available_balance<QuoteCoin>(alice_addr) == 470000, (vault::available_balance<QuoteCoin>(alice_addr) as u64));
         assert_eq_u128(vault::balance<BaseCoin>(alice_addr), 100);
 
         assert_eq_u128(vault::balance<QuoteCoin>(bob_addr), 10000);
         assert_eq_u128(vault::available_balance<QuoteCoin>(bob_addr), 10000);
         assert_eq_u128(vault::balance<BaseCoin>(bob_addr), 4900);
 
-        // 3. bob: SELL 1 @ 110
+        // 3. bob: SELL 1 @ 100
+        place_order<BaseCoin, QuoteCoin>(bob, false, 10000, 100,  LIMIT_ORDER);
+        assert_eq_u128(vault::balance<QuoteCoin>(alice_addr) , 480000);
+        assert!(vault::available_balance<QuoteCoin>(alice_addr) == 470000, (vault::available_balance<QuoteCoin>(alice_addr) as u64));
+        assert_eq_u128(vault::balance<BaseCoin>(alice_addr), 200);
+
+        assert_eq_u128(vault::balance<QuoteCoin>(bob_addr), 20000);
+        assert_eq_u128(vault::available_balance<QuoteCoin>(bob_addr), 20000);
+        assert_eq_u128(vault::balance<BaseCoin>(bob_addr), 4800);
+
+        // 4. bob: SELL 1 @ 110
         place_order<BaseCoin, QuoteCoin>(bob, false, 11000, 100, LIMIT_ORDER);
-        assert_eq_u128(vault::available_balance<BaseCoin>(bob_addr), 4800);
+        assert_eq_u128(vault::available_balance<BaseCoin>(bob_addr), 4700);
+        let order_id_3 = 3;
 
-        // // 3. alice: BUY .2 @ 120
-        // place_order<BaseCoin, QuoteCoin>(alice, alice_addr, true, 120000, 20, 0, 1003, LIMIT_ORDER, 0, true, MAX_U64, CANCEL_AGGRESSIVE);
-        //
-        // assert_eq_u128(vault::balance<QuoteCoin>(alice_addr), 468000);
-        // assert_eq_u128(vault::available_balance<QuoteCoin>(alice_addr), 458000);
-        // assert_eq_u128(vault::balance<BaseCoin>(alice_addr), 30);
-        //
-        // assert_eq_u128(vault::balance<BaseCoin>(bob_addr), 4970);
-        // assert_eq_u128(vault::available_balance<BaseCoin>(bob_addr), 4970);
-        // assert_eq_u128(vault::balance<QuoteCoin>(bob_addr), 32000);
-        //
-        // // 4. bob: SELL .1 @ 90
-        // place_order<BaseCoin, QuoteCoin>(bob, bob_addr, false, 90000, 10, 0, 1003, LIMIT_ORDER, 0, true, MAX_U64, CANCEL_AGGRESSIVE);
-        //
-        // assert_eq_u128(vault::balance<QuoteCoin>(alice_addr), 458000);
-        // assert_eq_u128(vault::available_balance<QuoteCoin>(alice_addr), 458000);
-        // assert_eq_u128(vault::balance<BaseCoin>(alice_addr), 40);
-        //
-        // assert_eq_u128(vault::balance<BaseCoin>(bob_addr), 4960);
-        // assert_eq_u128(vault::available_balance<BaseCoin>(bob_addr), 4960);
-        // assert_eq_u128(vault::balance<QuoteCoin>(bob_addr), 42000);
+        // 5. bob cancel
+        cancel_order<BaseCoin, QuoteCoin>(bob, order_id_3);
+        assert!(vault::available_balance<BaseCoin>(bob_addr) == 4800,
+            (vault::available_balance<BaseCoin>(bob_addr) as u64));
+
+        // 6. alice cancel
+        cancel_order<BaseCoin, QuoteCoin>(alice, order_id_0);
+        assert!(vault::available_balance<QuoteCoin>(alice_addr) == 480000,
+            (vault::available_balance<QuoteCoin>(alice_addr) as u64));
     }
-
-    //
-    // #[test_only]
-    // fun create_market_for_test<B, Q>(sender: &signer, aux: &signer, aptos_framework: &signer, base_decimals: u8, quote_decimals: u8, lot_size: u64, tick_size: u64) {
-    //     // Initialize vault
-    //     // util::init_coin_for_test<B>(aux, base_decimals);
-    //     // util::init_coin_for_test<Q>(aux, quote_decimals);
-    //     // vault::create_vault_for_test(sender);
-    //
-    //     // Create market
-    //     create_market<B, Q>(aux, lot_size, tick_size);
-    //     assert!(market_exists<B, Q>(), E_TEST_FAILURE);
-    //
-    //     // Start the wall clock
-    //     // timestamp::set_time_has_started_for_testing(aptos_framework);
-    // }
-
-    //
-    // #[test_only]
-    // fun get_test_order_id(aux_burn: u64, id: u64): u128 {
-    //     let aux_burn = MAX_U64 - aux_burn;
-    //     let aux_burn = (aux_burn as u128) << 64;
-    //     aux_burn + (id as u128)
-    // }
-    //
-
-
-    // #[test(sender = @0x5e7c3, aux = @aux, alice = @0x123, bob = @0x456, aptos_framework = @0x1)]
-    // fun test_place_order(sender: &signer, aux: &signer, alice: &signer, bob: &signer, aptos_framework: &signer) acquires Market, OpenOrderAccount {
-    //     let (alice_addr, bob_addr) = setup_for_test<BaseCoin, QuoteCoin>(sender, aux, alice, bob, aptos_framework, 2, 3, 10, 100);
-    //
-    //     // Set fees to 0 for testing
-    //     fee::init_zero_fees(alice);
-    //     fee::init_zero_fees(bob);
-    //
-    //
-    //     // Deposit 500 QuoteCoin to alice
-    //     vault::deposit<QuoteCoin>(alice, alice_addr, 500000);
-    //     assert_eq_u128(vault::balance<QuoteCoin>(alice_addr), 500000);
-    //     assert_eq_u128(vault::balance<BaseCoin>(alice_addr), 0);
-    //
-    //     // Deposit 50 BaseCoin to bob
-    //     vault::deposit<BaseCoin>(bob, bob_addr, 5000);
-    //     assert_eq_u128(vault::balance<QuoteCoin>(bob_addr), 0);
-    //     assert_eq_u128(vault::balance<BaseCoin>(bob_addr), 5000);
-    //
-    //     // Test placing limit orders
-    //
-    //     // 1. alice: BUY .2 @ 100
-    //     place_order<BaseCoin, QuoteCoin>(alice, alice_addr, true, 100000, 20, 0, 1001, LIMIT_ORDER, 0, true, MAX_U64, CANCEL_AGGRESSIVE);
-    //     assert_eq_u128(vault::balance<QuoteCoin>(alice_addr), 500000);
-    //     assert!(vault::available_balance<QuoteCoin>(alice_addr) == 480000, (vault::available_balance<QuoteCoin>(alice_addr) as u64));
-    //
-    //     // 2. bob: SELL .1 @ 100
-    //     place_order<BaseCoin, QuoteCoin>(bob, bob_addr, false, 100000, 10, 0, 1001, LIMIT_ORDER, 0, true, MAX_U64, CANCEL_PASSIVE);
-    //     assert_eq_u128(vault::balance<QuoteCoin>(alice_addr) , 490000);
-    //     assert!(vault::available_balance<QuoteCoin>(alice_addr) == 480000, (vault::available_balance<QuoteCoin>(alice_addr) as u64));
-    //     assert_eq_u128(vault::balance<BaseCoin>(alice_addr), 10);
-    //
-    //     assert_eq_u128(vault::balance<QuoteCoin>(bob_addr), 10000);
-    //     assert_eq_u128(vault::available_balance<QuoteCoin>(bob_addr), 10000);
-    //     assert_eq_u128(vault::balance<BaseCoin>(bob_addr), 4990);
-    //
-    //     // 3. bob: SELL .2 @ 110
-    //     place_order<BaseCoin, QuoteCoin>(bob, bob_addr, false, 110000, 20, 0, 1002, LIMIT_ORDER, 0, true, MAX_U64, CANCEL_AGGRESSIVE);
-    //     assert_eq_u128(vault::available_balance<BaseCoin>(bob_addr), 4970);
-    //
-    //     // 3. alice: BUY .2 @ 120
-    //     place_order<BaseCoin, QuoteCoin>(alice, alice_addr, true, 120000, 20, 0, 1003, LIMIT_ORDER, 0, true, MAX_U64, CANCEL_AGGRESSIVE);
-    //
-    //     assert_eq_u128(vault::balance<QuoteCoin>(alice_addr), 468000);
-    //     assert_eq_u128(vault::available_balance<QuoteCoin>(alice_addr), 458000);
-    //     assert_eq_u128(vault::balance<BaseCoin>(alice_addr), 30);
-    //
-    //     assert_eq_u128(vault::balance<BaseCoin>(bob_addr), 4970);
-    //     assert_eq_u128(vault::available_balance<BaseCoin>(bob_addr), 4970);
-    //     assert_eq_u128(vault::balance<QuoteCoin>(bob_addr), 32000);
-    //
-    //     // 4. bob: SELL .1 @ 90
-    //     place_order<BaseCoin, QuoteCoin>(bob, bob_addr, false, 90000, 10, 0, 1003, LIMIT_ORDER, 0, true, MAX_U64, CANCEL_AGGRESSIVE);
-    //
-    //     assert_eq_u128(vault::balance<QuoteCoin>(alice_addr), 458000);
-    //     assert_eq_u128(vault::available_balance<QuoteCoin>(alice_addr), 458000);
-    //     assert_eq_u128(vault::balance<BaseCoin>(alice_addr), 40);
-    //
-    //     assert_eq_u128(vault::balance<BaseCoin>(bob_addr), 4960);
-    //     assert_eq_u128(vault::available_balance<BaseCoin>(bob_addr), 4960);
-    //     assert_eq_u128(vault::balance<QuoteCoin>(bob_addr), 42000);
-    // }
-    //
-    //
-    // #[test(sender = @0x5e7c3, aux = @aux, alice = @0x123, bob = @0x456, aptos_framework = @0x1)]
-    // fun test_cancel_order(sender: &signer, aux: &signer, alice: &signer, bob: &signer, aptos_framework: &signer) acquires Market, OpenOrderAccount {
-    //     let (alice_addr, bob_addr) = setup_for_test<BaseCoin, QuoteCoin>(sender, aux, alice, bob, aptos_framework, 2, 3, 10, 100);
-    //
-    //     // Set fees to 0 for testing
-    //     fee::init_zero_fees(alice);
-    //     fee::init_zero_fees(bob);
-    //
-    //     vault::deposit<QuoteCoin>(alice, alice_addr, 500000);
-    //
-    //     place_order<BaseCoin, QuoteCoin>(alice, alice_addr, true, 100000, 20, 0, 1001, LIMIT_ORDER, 0, true, MAX_U64, CANCEL_AGGRESSIVE);
-    //     let order_id = get_test_order_id(0, 0);
-    //     assert_eq_u128(vault::balance<QuoteCoin>(alice_addr), 500000);
-    //     assert_eq_u128(vault::available_balance<QuoteCoin>(alice_addr), 480000);
-    //
-    //     vault::deposit<BaseCoin>(bob, bob_addr, 5000);
-    //     place_order<BaseCoin, QuoteCoin>(bob, bob_addr, false, 100000, 10, 0, 1001, LIMIT_ORDER, 0, true, MAX_U64, CANCEL_AGGRESSIVE);
-    //     assert_eq_u128(vault::balance<QuoteCoin>(alice_addr), 490000);
-    //     assert!(vault::available_balance<QuoteCoin>(alice_addr) == 480000, (vault::available_balance<QuoteCoin>(alice_addr) as u64));
-    //     assert_eq_u128(vault::balance<BaseCoin>(alice_addr), 10);
-    //
-    //     assert_eq_u128(vault::balance<QuoteCoin>(bob_addr), 10000);
-    //     assert_eq_u128(vault::balance<BaseCoin>(bob_addr), 4990);
-    //
-    //     cancel_order<BaseCoin, QuoteCoin>(alice, alice_addr, order_id);
-    //     assert_eq_u128(vault::balance<QuoteCoin>(alice_addr), 490000);
-    //     assert_eq_u128(vault::available_balance<QuoteCoin>(alice_addr), 490000);
-    //
-    //     place_order<BaseCoin, QuoteCoin>(bob, bob_addr, false, 100000, 10, 0, 1002, LIMIT_ORDER, 0, true, MAX_U64, CANCEL_AGGRESSIVE);
-    //     let order_id = get_test_order_id(0, 2);
-    //     assert_eq_u128(vault::balance<BaseCoin>(bob_addr), 4990);
-    //     assert_eq_u128(vault::available_balance<BaseCoin>(bob_addr), 4980);
-    //     cancel_order<BaseCoin, QuoteCoin>(bob, bob_addr, order_id);
-    //     assert_eq_u128(vault::balance<BaseCoin>(bob_addr), 4990);
-    //     assert_eq_u128(vault::available_balance<BaseCoin>(bob_addr), 4990);
-    // }
-    //
-    // #[test_only]
-    // fun n_orders<B, Q>(market: &Market<B, Q>): u64 {
-    //     let n = 0;
-    //
-    //     let idx = 0;
-    //     let levels_count = critbit::size(&market.asks);
-    //     while (idx < levels_count) {
-    //         let (_, level) = critbit::borrow_at_index(&market.asks, idx);
-    //         n = n + critbit_v::size(&level.orders);
-    //         idx = idx + 1;
-    //     };
-    //
-    //     let idx = 0;
-    //     let levels_count = critbit::size(&market.bids);
-    //     while (idx < levels_count) {
-    //         let (_, level) = critbit::borrow_at_index(&market.bids, idx);
-    //         n = n + critbit_v::size(&level.orders);
-    //         idx = idx + 1;
-    //     };
-    //
-    //     n
-    // }
-    //
-    // #[test_only]
-    // fun contains_order<B, Q>(market: &Market<B, Q>, order_id: u128): bool {
-    //     let idx = 0;
-    //     let levels_count = critbit::size(&market.asks);
-    //     while (idx < levels_count) {
-    //         let (_, level) = critbit::borrow_at_index(&market.asks, idx);
-    //         let n = critbit_v::find(&level.orders, order_id);
-    //         if (n != CRITBIT_NULL_INDEX) {
-    //             return true
-    //         };
-    //         idx = idx + 1;
-    //     };
-    //
-    //     false
-    // }
-    // #[test_only]
-    // fun n_orders_for<B, Q>(): u64 acquires Market {
-    //     n_orders(borrow_global<Market<B, Q>>(@aux))
-    // }
-    //
-    // #[test(sender = @0x5e7c3, aux = @aux, alice = @0x123, bob = @0x456, aptos_framework = @0x1)]
-    // fun test_timeout_order(sender: &signer, aux: &signer, alice: &signer, bob: &signer, aptos_framework: &signer) acquires Market, OpenOrderAccount {
-    //     // Set fees to 0 for testing
-    //     fee::init_zero_fees(alice);
-    //     fee::init_zero_fees(bob);
-    //
-    //     let (alice_addr, bob_addr) = setup_for_test<BaseCoin, QuoteCoin>(sender, aux, alice, bob, aptos_framework, 2, 3, 10, 100);
-    //     let market = borrow_global_mut<Market<BaseCoin, QuoteCoin>>(@aux);
-    //     vault::deposit<BaseCoin>(alice, alice_addr, 500000);
-    //     vault::deposit<BaseCoin>(bob, bob_addr, 500000);
-    //     vault::deposit<QuoteCoin>(bob, bob_addr, 500000);
-    //     vault::deposit<AuxCoin>(alice, alice_addr, 500);
-    //     vault::deposit<AuxCoin>(bob, bob_addr, 500);
-    //
-    //     // alice places a sell limit order, @10
-    //
-    //     // alice places a sell limit order
-    //     let (base_qty, quote_qty) = new_order(market, alice_addr, /*is_bid=*/false, /*price=*/1000, /*quantity=*/100, 0, LIMIT_ORDER, 1001, 0, true, MAX_U64, CANCEL_PASSIVE);
-    //     assert!(base_qty == 0, (base_qty as u64));
-    //     assert!(quote_qty == 0, (quote_qty as u64));
-    //     assert!(n_orders(market) == 1, E_TEST_FAILURE);
-    //
-    //     // bob places a buy limit order @ 800
-    //     let (base_qty, quote_qty) = new_order(market, bob_addr, /*is_bid=*/true, /*price=*/800, /*quantity=*/150, 0, LIMIT_ORDER, 1001, 0, true, 1000000, CANCEL_PASSIVE);
-    //     assert!(base_qty == 0, (base_qty as u64));
-    //     assert!(quote_qty == 0, (quote_qty as u64));
-    //     assert!(n_orders(market) == 2, E_TEST_FAILURE);
-    //
-    //     // bob get cancelled
-    //     timestamp::fast_forward_seconds(1);
-    //     let (base_qty, quote_qty) = new_order(market, alice_addr, /*is_bid=*/false, /*price=*/800, /*quantity=*/100, 0, LIMIT_ORDER, 1002, 0, true, MAX_U64, CANCEL_PASSIVE);
-    //     assert!(base_qty == 0, E_TEST_FAILURE);
-    //     assert!(quote_qty == 0, E_TEST_FAILURE);
-    //     assert!(n_orders(market) == 2, E_TEST_FAILURE);
-    //     assert!(n_levels(&market.asks) == 2, E_TEST_FAILURE);
-    //     assert!(n_levels(&market.bids) == 0, E_TEST_FAILURE);
-    // }
-
 }

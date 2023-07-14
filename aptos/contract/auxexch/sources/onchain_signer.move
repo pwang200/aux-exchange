@@ -17,7 +17,8 @@ module aux::onchain_signer {
         if (!exists<OnchainSigner>(signer::address_of(sender))) {
             let bytes = bcs::to_bytes(&@aux);
             vector::append(&mut bytes, b"aux-user");
-            let (user_signer, signer_capability) = account::create_resource_account(sender, bytes);
+            let (user_signer, signer_capability) =
+                account::create_resource_account(sender, bytes);
 
             move_to(
                 sender,
