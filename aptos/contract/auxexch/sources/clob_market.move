@@ -2,7 +2,6 @@ module aux::clob_market {
     use std::signer;
 
     use aptos_framework::coin;
-    use aptos_framework::timestamp;
 
     use aux::critbit::{Self, CritbitTree};
     use aux::critbit_v::{Self, CritbitTree as CritbitTreeV};
@@ -51,7 +50,6 @@ module aux::clob_market {
         quantity: u64,
         is_bid: bool,
         owner_id: address,
-        timeout_timestamp: u64,
     }
 
     fun destroy_order(order: Order) {
@@ -61,7 +59,6 @@ module aux::clob_market {
             quantity: _,
             is_bid: _,
             owner_id: _,
-            timeout_timestamp: _,
         } = order;
     }
 
@@ -71,7 +68,6 @@ module aux::clob_market {
         quantity: u64,
         is_bid: bool,
         owner_id: address,
-        timeout_timestamp: u64
     ): Order {
         Order {
             id,
@@ -79,7 +75,6 @@ module aux::clob_market {
             quantity,
             is_bid,
             owner_id,
-            timeout_timestamp,
         }
     }
 
@@ -159,12 +154,12 @@ module aux::clob_market {
         limit_price: u64,
         quantity: u64,
         order_type: u64,
-        timeout_timestamp: u64,
     ) acquires Market, OpenOrderAccount {
         assert!(market_exists<B, Q>(), E_MARKET_DOES_NOT_EXIST);
         let sender_addr = signer::address_of(sender);
         let resource_addr = @aux;
         let market = borrow_global_mut<Market<B, Q>>(resource_addr);
+        let order_id = generate_order_id(market);
 
         let (base_au, quote_au) = new_order(
             market,
@@ -172,9 +167,10 @@ module aux::clob_market {
             is_bid,
             limit_price,
             quantity,
-            timeout_timestamp,
             order_type,
+            order_id,
         );
+
         if (base_au != 0 && quote_au != 0) {
             // Debit/credit the sender's vault account
             if (is_bid) {
@@ -190,6 +186,7 @@ module aux::clob_market {
             // abort if sender paid but did not receive and vice versa
             abort (E_INVALID_STATE)
         }
+        //order_id
     }
 
     /// Returns (total_base_quantity_owed_au, quote_quantity_owed_au),
@@ -292,8 +289,8 @@ module aux::clob_market {
         is_bid: bool,
         limit_price: u64,
         quantity: u64,
-        timeout_timestamp: u64,
         order_type: u64,
+        order_id: u128,
     ): (u64, u64) acquires OpenOrderAccount {
         // Confirm the order_owner has fee published
         if (!ZERO_FEES) {
@@ -305,21 +302,17 @@ module aux::clob_market {
 
         assert!(quantity % lot_size == 0, E_INVALID_QUANTITY);
         assert!(limit_price % tick_size == 0, E_INVALID_PRICE);
-        let timestamp = timestamp::now_microseconds();
-        assert!(timestamp < timeout_timestamp, E_ORDER_EXPIRED_ON_ARRIVAL);
 
-        let order_id = generate_order_id(market);
         let order = Order {
             id: order_id,
             price: limit_price,
             quantity,
             is_bid,
             owner_id: order_owner,
-            timeout_timestamp,
         };
 
         // Check for matches
-        let (base_qty_filled, quote_qty_filled) = match(market, &mut order, timestamp, order_type);
+        let (base_qty_filled, quote_qty_filled) = match(market, &mut order, order_type);
         // Check for remaining order quantity
         if (order.quantity > 0) {
             handle_placed_order<B, Q>(&order);
@@ -415,7 +408,6 @@ module aux::clob_market {
     fun match<B, Q>(
         market: &mut Market<B, Q>,
         taker_order: &mut Order,
-        current_timestamp: u64,
         order_type: u64
     ): (u64, u64) acquires OpenOrderAccount {
         let side = if (taker_order.is_bid) { &mut market.asks } else { &mut market.bids };
@@ -440,13 +432,6 @@ module aux::clob_market {
                 while (level.total_quantity > 0 && taker_order.quantity > 0) {
                     let min_order_idx = critbit_v::get_min_index(&level.orders);
                     let (_, maker_order) = critbit_v::borrow_at_index(&level.orders, min_order_idx);
-                    // cancel the maker orde if it's already timed out.
-                    if (maker_order.timeout_timestamp <= current_timestamp) {
-                        let (_, min_order) = critbit_v::remove(&mut level.orders, min_order_idx);
-                        level.total_quantity = level.total_quantity - (min_order.quantity as u128);
-                        process_cancel_order<B, Q>(min_order);
-                        continue
-                    };
 
                     // Check whether self-trade occurs
                     if (taker_order.owner_id == maker_order.owner_id) {
@@ -584,21 +569,13 @@ module aux::clob_market {
         util::mint_coin_for_test<Q>(aux, bob_addr, 100000000);
         util::mint_coin_for_test<B>(aux, bob_addr, 100000000);
 
-        // Start the wall clock
-        timestamp::set_time_has_started_for_testing(@aptos_framework);
-
         return (alice_addr, bob_addr)
     }
 
     #[test(aux = @aux, alice = @0x123, bob = @0x456)]
-    fun test_place_order(aux: &signer, alice: &signer, bob: &signer) acquires Market, OpenOrderAccount {//} acquires Market, OpenOrderAccount {
+    fun test_place_order(aux: &signer, alice: &signer, bob: &signer) acquires Market, OpenOrderAccount {
         let (alice_addr, bob_addr) = setup_for_test<BaseCoin, QuoteCoin>(
             aux, alice, bob, 2, 2, 100, 1);
-        //
-        // util::maybe_register_coin<BaseCoin>(alice);
-        // util::maybe_register_coin<QuoteCoin>(bob);
-        // util::maybe_register_coin<BaseCoin>(alice);
-        // util::maybe_register_coin<QuoteCoin>(bob);
 
         // Set fees to 0 for testing
         fee::init_zero_fees(alice);
@@ -614,25 +591,25 @@ module aux::clob_market {
 
         // Test placing limit orders
 
-        // 1. alice: BUY .2 @ 100
-        place_order<BaseCoin, QuoteCoin>(alice, true, 100000, 200, LIMIT_ORDER, 0);
+        // 1. alice: BUY 2 @ 100
+        place_order<BaseCoin, QuoteCoin>(alice, true, 10000, 200, LIMIT_ORDER);
         assert_eq_u128(vault::balance<QuoteCoin>(alice_addr), 500000);
         assert!(vault::available_balance<QuoteCoin>(alice_addr) == 480000, (vault::available_balance<QuoteCoin>(alice_addr) as u64));
 
-        // // 2. bob: SELL .1 @ 100
-        // place_order<BaseCoin, QuoteCoin>(bob, false, 100000, 10, 0, 1001, LIMIT_ORDER, 0, true, MAX_U64, CANCEL_PASSIVE);
-        // assert_eq_u128(vault::balance<QuoteCoin>(alice_addr) , 490000);
-        // assert!(vault::available_balance<QuoteCoin>(alice_addr) == 480000, (vault::available_balance<QuoteCoin>(alice_addr) as u64));
-        // assert_eq_u128(vault::balance<BaseCoin>(alice_addr), 10);
-        //
-        // assert_eq_u128(vault::balance<QuoteCoin>(bob_addr), 10000);
-        // assert_eq_u128(vault::available_balance<QuoteCoin>(bob_addr), 10000);
-        // assert_eq_u128(vault::balance<BaseCoin>(bob_addr), 4990);
-        //
-        // // 3. bob: SELL .2 @ 110
-        // place_order<BaseCoin, QuoteCoin>(bob, bob_addr, false, 110000, 20, 0, 1002, LIMIT_ORDER, 0, true, MAX_U64, CANCEL_AGGRESSIVE);
-        // assert_eq_u128(vault::available_balance<BaseCoin>(bob_addr), 4970);
-        //
+        // 2. bob: SELL 1 @ 100
+        place_order<BaseCoin, QuoteCoin>(bob, false, 10000, 100,  LIMIT_ORDER);
+        assert_eq_u128(vault::balance<QuoteCoin>(alice_addr) , 490000);
+        assert!(vault::available_balance<QuoteCoin>(alice_addr) == 480000, (vault::available_balance<QuoteCoin>(alice_addr) as u64));
+        assert_eq_u128(vault::balance<BaseCoin>(alice_addr), 100);
+
+        assert_eq_u128(vault::balance<QuoteCoin>(bob_addr), 10000);
+        assert_eq_u128(vault::available_balance<QuoteCoin>(bob_addr), 10000);
+        assert_eq_u128(vault::balance<BaseCoin>(bob_addr), 4900);
+
+        // 3. bob: SELL 1 @ 110
+        place_order<BaseCoin, QuoteCoin>(bob, false, 11000, 100, LIMIT_ORDER);
+        assert_eq_u128(vault::available_balance<BaseCoin>(bob_addr), 4800);
+
         // // 3. alice: BUY .2 @ 120
         // place_order<BaseCoin, QuoteCoin>(alice, alice_addr, true, 120000, 20, 0, 1003, LIMIT_ORDER, 0, true, MAX_U64, CANCEL_AGGRESSIVE);
         //
